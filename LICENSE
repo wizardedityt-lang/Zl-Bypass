@@ -1,201 +1,508 @@
-                                 Apache License
-                           Version 2.0, January 2004
-                        http://www.apache.org/licenses/
+local player = game.Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
 
-   TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
+-- Önceki Nebula bağlantılarını güvenle sonlandır
+if _G.NebulaSignalRegistry then
+    for _, signal in ipairs(_G.NebulaSignalRegistry) do
+        pcall(function() signal:Disconnect() end)
+    end
+end
+_G.NebulaSignalRegistry = {}
 
-   1. Definitions.
+if playerGui:FindFirstChild("ZlhubReloadUI") then
+    playerGui.ZlhubReloadUI:Destroy()
+end
 
-      "License" shall mean the terms and conditions for use, reproduction,
-      and distribution as defined by Sections 1 through 9 of this document.
+local TweenService = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+local CoreGui = game:GetService("CoreGui")
+local StatsService = game:GetService("Stats")
+local SoundService = game:GetService("SoundService")
 
-      "Licensor" shall mean the copyright owner or entity authorized by
-      the copyright owner that is granting the License.
+-- ========================================================================
+-- 1. HARDWARE ENVIRONMENT & RESOLUTION
+-- ========================================================================
+local camera = workspace.CurrentCamera
+local vp = camera and camera.ViewportSize or Vector2.new(1920, 1080)
+local isMobile = (UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled) or (vp.X < 850)
 
-      "Legal Entity" shall mean the union of the acting entity and all
-      other entities that control, are controlled by, or are under common
-      control with that entity. For the purposes of this definition,
-      "control" means (i) the power, direct or indirect, to cause the
-      direction or management of such entity, whether by contract or
-      otherwise, or (ii) ownership of fifty percent (50%) or more of the
-      outstanding shares, or (iii) beneficial ownership of such entity.
+local THEME = {
+    Width = isMobile and 260 or 320,
+    Height = isMobile and 124 or 134,
+    BtnHeight = isMobile and 46 or 50,
+    Corner = 12,
+    DeviceTag = isMobile and "MOBILE" or "DESKTOP",
+    TargetURL = "https://raw.githubusercontent.com/xspeedHub0/Zlhub/main/ZLPVPreview.lua"
+}
 
-      "You" (or "Your") shall mean an individual or Legal Entity
-      exercising permissions granted by this License.
+-- ========================================================================
+-- 2. SES SENTEZLEYİCİ
+-- ========================================================================
+local function playTone(kind)
+    pcall(function()
+        local s = Instance.new("Sound")
+        s.Volume = 0.4
+        if kind == "click" then
+            s.SoundId = "rbxassetid://6895079853"
+            s.Pitch = 1.35
+        elseif kind == "success" then
+            s.SoundId = "rbxassetid://6436709848"
+            s.Pitch = 1.2
+            s.Volume = 0.6
+        end
+        s.Parent = SoundService
+        s:Play()
+        s.Ended:Connect(function() s:Destroy() end)
+    end)
+end
 
-      "Source" form shall mean the preferred form for making modifications,
-      including but not limited to software source code, documentation
-      source, and configuration files.
+-- ========================================================================
+-- 3. 0MS PRE-CACHE & ÇÖKMEZ DEVRE DIŞI BIRAKICI
+-- ========================================================================
+local cachedSource = nil
+local isExecuting = false
+local runCount = 0
 
-      "Object" form shall mean any form resulting from mechanical
-      transformation or translation of a Source form, including but
-      not limited to compiled object code, generated documentation,
-      and conversions to other media types.
+local function fetchSource()
+    local req = (syn and syn.request) or (http and http.request) or http_request or request
+    if type(req) == "function" then
+        local res = req({
+            Url = THEME.TargetURL .. "?nocache=" .. tostring(os.time()),
+            Method = "GET"
+        })
+        if res and res.Body and #res.Body > 0 then
+            return res.Body
+        end
+    end
+    return game:HttpGet(THEME.TargetURL .. "?nocache=" .. tostring(os.time()))
+end
 
-      "Work" shall mean the work of authorship, whether in Source or
-      Object form, made available under the License, as indicated by a
-      copyright notice that is included in or attached to the work
-      (an example is provided in the Appendix below).
+task.spawn(function()
+    local ok, src = pcall(fetchSource)
+    if ok and src and #src > 0 then
+        cachedSource = src
+    end
+end)
 
-      "Derivative Works" shall mean any work, whether in Source or Object
-      form, that is based on (or derived from) the Work and for which the
-      editorial revisions, annotations, elaborations, or other modifications
-      represent, as a whole, an original work of authorship. For the purposes
-      of this License, Derivative Works shall not include works that remain
-      separable from, or merely link (or bind by name) to the interfaces of,
-      the Work and Derivative Works thereof.
+-- CRASH ÇÖZÜMÜ: :Destroy() çağrılmaz, C++ motor referans hatası engellenir
+local function safeDisableOldGui()
+    local containers = { playerGui }
+    pcall(function()
+        if typeof(gethui) == "function" then table.insert(containers, gethui()) end
+    end)
 
-      "Contribution" shall mean any work of authorship, including
-      the original version of the Work and any modifications or additions
-      to that Work or Derivative Works thereof, that is intentionally
-      submitted to Licensor for inclusion in the Work by the copyright owner
-      or by an individual or Legal Entity authorized to submit on behalf of
-      the copyright owner. For the purposes of this definition, "submitted"
-      means any form of electronic, verbal, or written communication sent
-      to the Licensor or its representatives, including but not limited to
-      communication on electronic mailing lists, source code control systems,
-      and issue tracking systems that are managed by, or on behalf of, the
-      Licensor for the purpose of discussing and improving the Work, but
-      excluding communication that is conspicuously marked or otherwise
-      designated in writing by the copyright owner as "Not a Contribution."
+    for i = 1, #containers do
+        local parent = containers[i]
+        if parent then
+            for _, child in ipairs(parent:GetChildren()) do
+                if child.Name ~= "ZlhubReloadUI" then
+                    local nm = child.Name:lower()
+                    if nm:find("zl", 1, true) or nm:find("zlpv", 1, true) or nm:find("xspeed", 1, true) then
+                        pcall(function()
+                            if child:IsA("ScreenGui") or child:IsA("BillboardGui") then
+                                child.Enabled = false
+                            end
+                            if child:IsA("GuiObject") then
+                                child.Visible = false
+                            end
+                        end)
+                    end
+                end
+            end
+        end
+    end
+end
 
-      "Contributor" shall mean Licensor and any individual or Legal Entity
-      on behalf of whom a Contribution has been received by Licensor and
-      subsequently incorporated within the Work.
+-- ========================================================================
+-- 4. TAM EKRAN ROOT GUI
+-- ========================================================================
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "ZlhubReloadUI"
+screenGui.ResetOnSpawn = false
+screenGui.IgnoreGuiInset = true
+screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 
-   2. Grant of Copyright License. Subject to the terms and conditions of
-      this License, each Contributor hereby grants to You a perpetual,
-      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
-      copyright license to reproduce, prepare Derivative Works of,
-      publicly display, publicly perform, sublicense, and distribute the
-      Work and such Derivative Works in Source or Object form.
+local function attachScreen()
+    local mounted = false
+    pcall(function()
+        if typeof(gethui) == "function" then
+            screenGui.Parent = gethui()
+            mounted = true
+        elseif syn and syn.protect_gui then
+            syn.protect_gui(screenGui)
+            screenGui.Parent = CoreGui
+            mounted = true
+        end
+    end)
+    if not mounted or not screenGui.Parent then
+        screenGui.Parent = playerGui
+    end
+end
+attachScreen()
 
-   3. Grant of Patent License. Subject to the terms and conditions of
-      this License, each Contributor hereby grants to You a perpetual,
-      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
-      (except as stated in this section) patent license to make, have made,
-      use, offer to sell, sell, import, and otherwise transfer the Work,
-      where such license applies only to those patent claims licensable
-      by such Contributor that are necessarily infringed by their
-      Contribution(s) alone or by combination of their Contribution(s)
-      with the Work to which such Contribution(s) was submitted. If You
-      institute patent litigation against any entity (including a
-      cross-claim or counterclaim in a lawsuit) alleging that the Work
-      or a Contribution incorporated within the Work constitutes direct
-      or contributory patent infringement, then any patent licenses
-      granted to You under this License for that Work shall terminate
-      as of the date such litigation is filed.
+-- ========================================================================
+-- 5. CHASSIS (GÖVDE & OBSİDYEN CAM)
+-- ========================================================================
+local posX = isMobile and 16 or 45
+local posY = isMobile and 65 or 120
 
-   4. Redistribution. You may reproduce and distribute copies of the
-      Work or Derivative Works thereof in any medium, with or without
-      modifications, and in Source or Object form, provided that You
-      meet the following conditions:
+-- Ambient Arka Işık
+local halo = Instance.new("Frame")
+halo.Name = "AmbientHalo"
+halo.Size = UDim2.new(0, THEME.Width + 12, 0, THEME.Height + 12)
+halo.Position = UDim2.new(0, posX - 6, 0, posY - 6)
+halo.BackgroundColor3 = Color3.fromRGB(110, 50, 220)
+halo.BackgroundTransparency = 0.88
+halo.BorderSizePixel = 0
+halo.Active = false
+halo.Parent = screenGui
+Instance.new("UICorner", halo).CornerRadius = UDim.new(0, THEME.Corner + 4)
 
-      (a) You must give any other recipients of the Work or
-          Derivative Works a copy of this License; and
+-- Ana Kart Gövdesi
+local mainFrame = Instance.new("Frame")
+mainFrame.Name = "NebulaMainContainer"
+mainFrame.Size = UDim2.new(0, THEME.Width, 0, THEME.Height)
+mainFrame.Position = UDim2.new(0, posX, 0, posY)
+mainFrame.BackgroundColor3 = Color3.fromRGB(11, 13, 20)
+mainFrame.BorderSizePixel = 0
+mainFrame.Active = false
+mainFrame.ClipsDescendants = true
+mainFrame.Parent = screenGui
+Instance.new("UICorner", mainFrame).CornerRadius = UDim.new(0, THEME.Corner)
 
-      (b) You must cause any modified files to carry prominent notices
-          stating that You changed the files; and
+-- 1.2px Keskin Dönen Galaksi Kenarlık
+local borderStroke = Instance.new("UIStroke", mainFrame)
+borderStroke.Thickness = 1.2
+borderStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
 
-      (c) You must retain, in the Source form of any Derivative Works
-          that You distribute, all copyright, patent, trademark, and
-          attribution notices from the Source form of the Work,
-          excluding those notices that do not pertain to any part of
-          the Derivative Works; and
+local galaxyGradient = Instance.new("UIGradient", borderStroke)
+galaxyGradient.Color = ColorSequence.new({
+    ColorSequenceKeypoint.new(0.00, Color3.fromRGB(0, 240, 255)),
+    ColorSequenceKeypoint.new(0.25, Color3.fromRGB(135, 50, 245)),
+    ColorSequenceKeypoint.new(0.50, Color3.fromRGB(245, 45, 160)),
+    ColorSequenceKeypoint.new(0.75, Color3.fromRGB(60, 80, 230)),
+    ColorSequenceKeypoint.new(1.00, Color3.fromRGB(0, 240, 255))
+})
+galaxyGradient.Rotation = 0
 
-      (d) If the Work includes a "NOTICE" text file as part of its
-          distribution, then any Derivative Works that You distribute must
-          include a readable copy of the attribution notices contained
-          within such NOTICE file, excluding those notices that do not
-          pertain to any part of the Derivative Works, in at least one
-          of the following places: within a NOTICE text file distributed
-          as part of the Derivative Works; within the Source form or
-          documentation, if provided along with the Derivative Works; or,
-          within a display generated by the Derivative Works, if and
-          wherever such third-party notices normally appear. The contents
-          of the NOTICE file are for informational purposes only and
-          do not modify the License. You may add Your own attribution
-          notices within Derivative Works that You distribute, alongside
-          or as an addendum to the NOTICE text from the Work, provided
-          that such additional attribution notices cannot be construed
-          as modifying the License.
+-- İç Obsidyen Cam Katmanı
+local innerGlass = Instance.new("Frame", mainFrame)
+innerGlass.Size = UDim2.new(1, 0, 1, 0)
+innerGlass.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+innerGlass.BackgroundTransparency = 0.96
+innerGlass.BorderSizePixel = 0
+innerGlass.Active = false
+Instance.new("UICorner", innerGlass).CornerRadius = UDim.new(0, THEME.Corner)
 
-      You may add Your own copyright statement to Your modifications and
-      may provide additional or different license terms and conditions
-      for use, reproduction, or distribution of Your modifications, or
-      for any such Derivative Works as a whole, provided Your use,
-      reproduction, and distribution of the Work otherwise complies with
-      the conditions stated in this License.
+local glassGrad = Instance.new("UIGradient", innerGlass)
+glassGrad.Color = ColorSequence.new({
+    ColorSequenceKeypoint.new(0.0, Color3.fromRGB(50, 60, 95)),
+    ColorSequenceKeypoint.new(0.4, Color3.fromRGB(15, 16, 28)),
+    ColorSequenceKeypoint.new(1.0, Color3.fromRGB(9, 10, 16))
+})
+glassGrad.Rotation = 60
 
-   5. Submission of Contributions. Unless You explicitly state otherwise,
-      any Contribution intentionally submitted for inclusion in the Work
-      by You to the Licensor shall be under the terms and conditions of
-      this License, without any additional terms or conditions.
-      Notwithstanding the above, nothing herein shall supersede or modify
-      the terms of any separate license agreement you may have executed
-      with Licensor regarding such Contributions.
+-- ========================================================================
+-- 6. BAĞIMSIZ BAŞLIK & SÜRÜKLEME KOLU (DRAG HANDLE)
+-- ========================================================================
+local dragHeader = Instance.new("Frame", mainFrame)
+dragHeader.Name = "DragHeader"
+dragHeader.Size = UDim2.new(1, 0, 0, 34)
+dragHeader.Position = UDim2.new(0, 0, 0, 0)
+dragHeader.BackgroundTransparency = 1
+dragHeader.Active = true
 
-   6. Trademarks. This License does not grant permission to use the trade
-      names, trademarks, service marks, or product names of the Licensor,
-      except as required for reasonable and customary use in describing the
-      origin of the Work and reproducing the content of the NOTICE file.
+local titleLabel = Instance.new("TextLabel", dragHeader)
+titleLabel.Size = UDim2.new(0.6, 0, 1, 0)
+titleLabel.Position = UDim2.new(0, 14, 0, 0)
+titleLabel.BackgroundTransparency = 1
+titleLabel.Font = Enum.Font.GothamBold
+titleLabel.Text = "NEBULA <font color='#00F0FF'>HUB</font>"
+titleLabel.RichText = true
+titleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+titleLabel.TextSize = 13
+titleLabel.TextXAlignment = Enum.TextXAlignment.Left
 
-   7. Disclaimer of Warranty. Unless required by applicable law or
-      agreed to in writing, Licensor provides the Work (and each
-      Contributor provides its Contributions) on an "AS IS" BASIS,
-      WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
-      implied, including, without limitation, any warranties or conditions
-      of TITLE, NON-INFRINGEMENT, MERCHANTABILITY, or FITNESS FOR A
-      PARTICULAR PURPOSE. You are solely responsible for determining the
-      appropriateness of using or redistributing the Work and assume any
-      risks associated with Your exercise of permissions under this License.
+-- Sağ Durum Rozeti
+local statusBadge = Instance.new("Frame", dragHeader)
+statusBadge.Size = UDim2.new(0, 68, 0, 18)
+statusBadge.Position = UDim2.new(1, -80, 0.5, -9)
+statusBadge.BackgroundColor3 = Color3.fromRGB(16, 20, 30)
+statusBadge.BorderSizePixel = 0
+Instance.new("UICorner", statusBadge).CornerRadius = UDim.new(0, 6)
 
-   8. Limitation of Liability. In no event and under no legal theory,
-      whether in tort (including negligence), contract, or otherwise,
-      unless required by applicable law (such as deliberate and grossly
-      negligent acts) or agreed to in writing, shall any Contributor be
-      liable to You for damages, including any direct, indirect, special,
-      incidental, or consequential damages of any character arising as a
-      result of this License or out of the use or inability to use the
-      Work (including but not limited to damages for loss of goodwill,
-      work stoppage, computer failure or malfunction, or any and all
-      other commercial damages or losses), even if such Contributor
-      has been advised of the possibility of such damages.
+local badgeStroke = Instance.new("UIStroke", statusBadge)
+badgeStroke.Thickness = 1
+badgeStroke.Color = Color3.fromRGB(0, 230, 160)
+badgeStroke.Transparency = 0.6
 
-   9. Accepting Warranty or Additional Liability. While redistributing
-      the Work or Derivative Works thereof, You may choose to offer,
-      and charge a fee for, acceptance of support, warranty, indemnity,
-      or other liability obligations and/or rights consistent with this
-      License. However, in accepting such obligations, You may act only
-      on Your own behalf and on Your sole responsibility, not on behalf
-      of any other Contributor, and only if You agree to indemnify,
-      defend, and hold each Contributor harmless for any liability
-      incurred by, or claims asserted against, such Contributor by reason
-      of your accepting any such warranty or additional liability.
+local liveDot = Instance.new("Frame", statusBadge)
+liveDot.Size = UDim2.new(0, 6, 0, 6)
+liveDot.Position = UDim2.new(0, 7, 0.5, -3)
+liveDot.BackgroundColor3 = Color3.fromRGB(0, 230, 160)
+liveDot.BorderSizePixel = 0
+Instance.new("UICorner", liveDot).CornerRadius = UDim.new(1, 0)
 
-   END OF TERMS AND CONDITIONS
+local statusText = Instance.new("TextLabel", statusBadge)
+statusText.Size = UDim2.new(1, -18, 1, 0)
+statusText.Position = UDim2.new(0, 18, 0, 0)
+statusText.BackgroundTransparency = 1
+statusText.Font = Enum.Font.GothamBold
+statusText.Text = THEME.DeviceTag
+statusText.TextColor3 = Color3.fromRGB(0, 230, 160)
+statusText.TextSize = 8
+statusText.TextXAlignment = Enum.TextXAlignment.Left
 
-   APPENDIX: How to apply the Apache License to your work.
+-- ========================================================================
+-- 7. HD TELEMETRİ KAPSÜLLERİ
+-- ========================================================================
+local statsRow = Instance.new("Frame", mainFrame)
+statsRow.Name = "TelemetryRow"
+statsRow.Size = UDim2.new(1, -28, 0, 18)
+statsRow.Position = UDim2.new(0, 14, 0, 34)
+statsRow.BackgroundTransparency = 1
 
-      To apply the Apache License to your work, attach the following
-      boilerplate notice, with the fields enclosed by brackets "[]"
-      replaced with your own identifying information. (Don't include
-      the brackets!)  The text should be enclosed in the appropriate
-      comment syntax for the file format. We also recommend that a
-      file or class name and description of purpose be included on the
-      same "printed page" as the copyright notice for easier
-      identification within third-party archives.
+local function createMetricBox(text, xPosScale, widthScale)
+    local lbl = Instance.new("TextLabel", statsRow)
+    lbl.Size = UDim2.new(widthScale, -4, 1, 0)
+    lbl.Position = UDim2.new(xPosScale, 2, 0, 0)
+    lbl.BackgroundColor3 = Color3.fromRGB(16, 18, 28)
+    lbl.BorderSizePixel = 0
+    lbl.Font = Enum.Font.GothamBold
+    lbl.Text = text
+    lbl.TextColor3 = Color3.fromRGB(150, 160, 190)
+    lbl.TextSize = 8
+    lbl.TextXAlignment = Enum.TextXAlignment.Center
+    Instance.new("UICorner", lbl).CornerRadius = UDim.new(0, 4)
 
-   Copyright [yyyy] [name of copyright owner]
+    local s = Instance.new("UIStroke", lbl)
+    s.Thickness = 1
+    s.Color = Color3.fromRGB(32, 38, 54)
+    return lbl
+end
 
-   Licensed under the Apache License, Version 2.0 (the "License");
-   you may not use this file except in compliance with the License.
-   You may obtain a copy of the License at
+local fpsLabel = createMetricBox("FPS: --", 0.00, 0.33)
+local pingLabel = createMetricBox("MS: --", 0.33, 0.34)
+local runsLabel = createMetricBox("RUNS: 0", 0.67, 0.33)
+runsLabel.TextColor3 = Color3.fromRGB(0, 240, 255)
 
-       http://www.apache.org/licenses/LICENSE-2.0
+-- ========================================================================
+-- 8. THE HERO SINGLE BUTTON (NEBULA BYPASS)
+-- ========================================================================
+local buttonWrapper = Instance.new("Frame", mainFrame)
+buttonWrapper.Name = "HeroButtonWrapper"
+buttonWrapper.Size = UDim2.new(1, -28, 0, THEME.BtnHeight)
+buttonWrapper.Position = UDim2.new(0, 14, 1, -(THEME.BtnHeight + 12))
+buttonWrapper.BackgroundTransparency = 1
+buttonWrapper.Active = false
 
-   Unless required by applicable law or agreed to in writing, software
-   distributed under the License is distributed on an "AS IS" BASIS,
-   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-   See the License for the specific language governing permissions and
-   limitations under the License.
+local btnGlow = Instance.new("Frame", buttonWrapper)
+btnGlow.Size = UDim2.new(1, 2, 1, 2)
+btnGlow.Position = UDim2.new(0, -1, 0, -1)
+btnGlow.BackgroundColor3 = Color3.fromRGB(0, 200, 255)
+btnGlow.BackgroundTransparency = 0.85
+btnGlow.BorderSizePixel = 0
+Instance.new("UICorner", btnGlow).CornerRadius = UDim.new(0, 9)
+
+local actionButton = Instance.new("TextButton", buttonWrapper)
+actionButton.Name = "NebulaHeroButton"
+actionButton.Size = UDim2.new(1, 0, 1, 0)
+actionButton.BackgroundColor3 = Color3.fromRGB(16, 20, 32)
+actionButton.BorderSizePixel = 0
+actionButton.AutoButtonColor = false
+actionButton.Font = Enum.Font.GothamBold
+actionButton.Text = "⚡ NEBULA BYPASS"
+actionButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+actionButton.TextSize = 13
+actionButton.ClipsDescendants = true
+actionButton.Active = true
+actionButton.ZIndex = 100
+Instance.new("UICorner", actionButton).CornerRadius = UDim.new(0, 8)
+
+local originalGradColors = ColorSequence.new({
+    ColorSequenceKeypoint.new(0.00, Color3.fromRGB(0, 160, 255)),
+    ColorSequenceKeypoint.new(0.50, Color3.fromRGB(95, 45, 220)),
+    ColorSequenceKeypoint.new(1.00, Color3.fromRGB(200, 35, 140))
+})
+
+local emeraldGradColors = ColorSequence.new({
+    ColorSequenceKeypoint.new(0.00, Color3.fromRGB(0, 230, 150)),
+    ColorSequenceKeypoint.new(0.50, Color3.fromRGB(185, 120)),
+    ColorSequenceKeypoint.new(1.00, Color3.fromRGB(145, 95))
+})
+
+local btnGrad = Instance.new("UIGradient", actionButton)
+btnGrad.Color = originalGradColors
+btnGrad.Rotation = 15
+
+local btnStroke = Instance.new("UIStroke", actionButton)
+btnStroke.Thickness = 1
+btnStroke.Color = Color3.fromRGB(255, 255, 255)
+btnStroke.Transparency = 0.7
+
+-- ========================================================================
+-- 9. SÜRÜKLEME FİZİĞİ (TILT DRAG)
+-- ========================================================================
+local dragging = false
+local dragStart = Vector3.zero
+local startPos = UDim2.new()
+local dragVel = 0
+local lastX = 0
+
+dragHeader.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = true
+        dragStart = input.Position
+        startPos = mainFrame.Position
+        lastX = input.Position.X
+
+        input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then
+                dragging = false
+                TweenService:Create(mainFrame, TweenInfo.new(0.2, Enum.EasingStyle.Quad), { Rotation = 0 }):Play()
+            end
+        end)
+    end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+    if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+        local delta = input.Position - dragStart
+        dragVel = input.Position.X - lastX
+        lastX = input.Position.X
+
+        local tiltAngle = math.clamp(dragVel * 0.4, -7, 7)
+        mainFrame.Rotation = tiltAngle
+
+        mainFrame.Position = UDim2.new(
+            startPos.X.Scale,
+            startPos.X.Offset + delta.X,
+            startPos.Y.Scale,
+            startPos.Y.Offset + delta.Y
+        )
+        halo.Position = UDim2.new(
+            startPos.X.Scale,
+            startPos.X.Offset + delta.X - 6,
+            startPos.Y.Scale,
+            startPos.Y.Offset + delta.Y - 6
+        )
+    end
+end)
+
+-- ========================================================================
+-- 10. RUNTIME RENDER DÖNGÜSÜ (HAFİFLETİLMİŞ & STABİL)
+-- ========================================================================
+local rotSpeed = 90
+local frameCount = 0
+local lastSync = os.clock()
+
+local heartbeatConn = RunService.RenderStepped:Connect(function(dt)
+    if galaxyGradient and galaxyGradient.Parent then
+        galaxyGradient.Rotation = (galaxyGradient.Rotation + rotSpeed * dt) % 360
+    end
+
+    frameCount = frameCount + 1
+    local now = os.clock()
+    if now - lastSync >= 0.5 then
+        local fpsVal = math.floor(frameCount / (now - lastSync))
+        fpsLabel.Text = "FPS: " .. tostring(fpsVal)
+        frameCount = 0
+        lastSync = now
+
+        pcall(function()
+            local pingVal = StatsService.Network.ServerStatsItem["Data Ping"]:GetValue()
+            pingLabel.Text = string.format("MS: %.0f", pingVal)
+        end)
+    end
+end)
+table.insert(_G.NebulaSignalRegistry, heartbeatConn)
+
+-- ========================================================================
+-- 11. GÜVENLİ TETİKLEME & ZÜMRÜT FLAŞ (ÇÖKME YAPMAZ)
+-- ========================================================================
+local function TriggerExecution()
+    if isExecuting then return end
+    isExecuting = true
+
+    playTone("click")
+
+    -- Yumuşak basılma animasyonu
+    TweenService:Create(actionButton, TweenInfo.new(0.06), { Size = UDim2.new(0.97, 0, 0.92, 0) }):Play()
+    task.delay(0.06, function()
+        TweenService:Create(actionButton, TweenInfo.new(0.1), { Size = UDim2.new(1, 0, 1, 0) }):Play()
+    end)
+
+    -- Zümrüt Yeşili Flaş
+    btnGrad.Color = emeraldGradColors
+    btnGlow.BackgroundColor3 = Color3.fromRGB(0, 240, 150)
+    btnGlow.BackgroundTransparency = 0.6
+    actionButton.Text = "✔ EXECUTED"
+
+    task.spawn(function()
+        -- 1. ADIM: Eski script arayüzünü C++ çökmesi olmadan gizle
+        safeDisableOldGui()
+
+        -- 2. ADIM: Kodu al
+        local code = cachedSource
+        if not code then
+            local ok, src = pcall(fetchSource)
+            if ok and src and #src > 0 then
+                code = src
+                cachedSource = src
+            else
+                actionButton.Text = "✖ HTTP FAIL"
+                btnGlow.BackgroundColor3 = Color3.fromRGB(255, 50, 50)
+                task.wait(0.4)
+                actionButton.Text = "⚡ NEBULA BYPASS"
+                btnGrad.Color = originalGradColors
+                btnGlow.BackgroundColor3 = Color3.fromRGB(0, 200, 255)
+                isExecuting = false
+                return
+            end
+        end
+
+        -- 3. ADIM: Çalıştır
+        local compileOk, fn = pcall(loadstring, code)
+        if compileOk and type(fn) == "function" then
+            task.spawn(fn)
+            runCount = runCount + 1
+            runsLabel.Text = "RUNS: " .. tostring(runCount)
+            playTone("success")
+        end
+
+        task.wait(0.35)
+        TweenService:Create(btnGlow, TweenInfo.new(0.35, Enum.EasingStyle.Quad), {
+            BackgroundColor3 = Color3.fromRGB(0, 200, 255),
+            BackgroundTransparency = 0.85
+        }):Play()
+
+        btnGrad.Color = originalGradColors
+        actionButton.Text = "⚡ ZL BYPASS"
+        isExecuting = false
+    end)
+end
+
+actionButton.MouseButton1Click:Connect(TriggerExecution)
+actionButton.Activated:Connect(function()
+    if not isExecuting then
+        TriggerExecution()
+    end
+end)
+
+-- Hit-Test Fallback (Mobil executor'larda dokunmatik tıklama garantisi)
+local hitTestConn = UserInputService.InputBegan:Connect(function(input, processed)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        if not isExecuting and mainFrame.Visible then
+            local mouseLoc = Vector2.new(input.Position.X, input.Position.Y)
+            local btnAbsPos = actionButton.AbsolutePosition
+            local btnAbsSize = actionButton.AbsoluteSize
+
+            if mouseLoc.X >= btnAbsPos.X and mouseLoc.X <= btnAbsPos.X + btnAbsSize.X and
+               mouseLoc.Y >= btnAbsPos.Y and mouseLoc.Y <= btnAbsPos.Y + btnAbsSize.Y then
+                TriggerExecution()
+            end
+        end
+    end
+end)
+table.insert(_G.NebulaSignalRegistry, hitTestConn)
